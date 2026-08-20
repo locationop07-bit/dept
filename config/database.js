@@ -12,6 +12,6 @@ const sequelize = new Sequelize(
 		dialectOptions: useSsl ? { ssl: { require: true, rejectUnauthorized: false } } : {},
 		logging: false
 	}
-);
+);	
 
 module.exports = sequelize;
