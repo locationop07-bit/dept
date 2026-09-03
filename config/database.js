@@ -10,7 +10,8 @@ const sequelize = new Sequelize(
 		port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
 		dialect: 'postgres',
 		dialectOptions: useSsl ? { ssl: { require: true, rejectUnauthorized: false } } : {},
-		logging: false
+		// Enable SQL logging when SEQ_LOG=true (helps debugging slow/hanging DB calls)
+		logging: process.env.SEQ_LOG === 'true' ? console.log : false
 	}
 );	
 

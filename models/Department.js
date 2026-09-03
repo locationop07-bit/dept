@@ -10,7 +10,11 @@ const Department = sequelize.define('Department', {
     description: DataTypes.STRING
 });
 // after Department is defined with sequelize.define( .)
-Department.associate = (models) => {
-    Department.hasMany(models.Employee, { foreignKey: 'departmentId' });
+// accepts an options object so we can toggle cascade behavior at runtime
+Department.associate = (models, opts = {}) => {
+    const associationOptions = { foreignKey: 'departmentId' };
+    // explicitly choose behavior so DB constraint is created as intended
+    associationOptions.onDelete = opts.cascade ? 'CASCADE' : 'RESTRICT';
+    Department.hasMany(models.Employee, associationOptions);
 };
 module.exports = Department;

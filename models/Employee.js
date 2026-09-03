@@ -18,7 +18,11 @@ const Employee = sequelize.define('Employee', {
     },
     departmentId: {
         type: DataTypes.INTEGER,
-        allowNull: false
+        allowNull: false,
+        references: {
+            model: 'Departments',
+            key: 'id'
+        }
     }
 });
 

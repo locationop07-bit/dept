@@ -11,8 +11,9 @@ fs.readdirSync(__dirname)
     models[name] = model;
   });
 
+const cascade = process.env.CASCADE === 'true';
 Object.values(models).forEach((model) => {
-  if (model.associate) model.associate(models);
+  if (model.associate) model.associate(models, { cascade });
 });
 
 module.exports = models;
