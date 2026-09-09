@@ -22,103 +22,98 @@ async function demo(cascadeFlag) {
     const { Department, Employee } = models;
 
     console.log(`\n--- Running demo (CASCADE=${process.env.CASCADE}) ---`);
-    await sequelize.authenticate();
-    console.log('Connection established.');
-    await sequelize.sync({ force: true });
+        await sequelize.authenticate();
+        console.log('Connection established.');
+        console.log('Assuming migrations have been applied (run `node migrate.js up`).');
 
-    console.log('\nSTEP 1 — Create: creating departments and employees');
-    const d1 = await Department.create({ name: 'Engineering', description: 'Eng team' });
-    const d2 = await Department.create({ name: 'HR', description: 'People ops' });
+        // Begin many-to-many demo: Projects and EmployeeProject (join table)
+        console.log('\nSTEP 1 — Create: projects and assignments (employee.addProject)');
 
-    const employeesData = [
-        { name: 'Alice', email: 'alice@example.com', salary: 90000.00, departmentId: d1.id },
-        { name: 'Bob', email: 'bob@example.com', salary: 80000.00, departmentId: d1.id },
-        { name: 'Carol', email: 'carol@example.com', salary: 85000.00, departmentId: d2.id },
-        { name: 'Dave', email: 'dave@example.com', salary: 70000.00, departmentId: d1.id },
-        { name: 'Eve', email: 'eve@example.com', salary: 75000.00, departmentId: d2.id }
-    ];
-    await Promise.all(employeesData.map((e) => Employee.create(e)));
+        // Create two projects
+        const p1 = await models.Project.create({ name: 'Project Alpha', deadline: null });
+        const p2 = await models.Project.create({ name: 'Project Beta', deadline: null });
 
-    console.log('\nSTEP 2 — Read forward: fetch department with its employees');
-    const eng = await Department.findOne({ where: { name: 'Engineering' }, include: Employee });
-    console.log(`Department: ${eng.name}`);
-    console.log('Employees:', eng.Employees.map((e) => e.name).join(', '));
+        // Ensure we have employees — create sample Departments and Employees if needed
+        let eng = await models.Department.findOne({ where: { name: 'Engineering' } });
+        if (!eng) eng = await models.Department.create({ name: 'Engineering' });
+        let hr = await models.Department.findOne({ where: { name: 'HR' } });
+        if (!hr) hr = await models.Department.create({ name: 'HR' });
 
-    console.log('\nSTEP 3 — Read reverse: fetch employee with its department');
-    const alice = await Employee.findOne({ where: { name: 'Alice' }, include: Department });
-    console.log(`${alice.name} -> Department: ${alice.Department.name}`);
+        const existing = await models.Employee.findAll();
+        if (existing.length < 4) {
+            // create 4 employees (some may already exist)
+            const toCreate = [
+                { name: 'Alice', email: 'alice@example.com', salary: 90000.00, departmentId: eng.id },
+                { name: 'Bob', email: 'bob@example.com', salary: 80000.00, departmentId: eng.id },
+                { name: 'Carol', email: 'carol@example.com', salary: 85000.00, departmentId: hr.id },
+                { name: 'Dave', email: 'dave@example.com', salary: 70000.00, departmentId: eng.id }
+            ];
+            for (const e of toCreate) {
+                // avoid duplicates by email
+                const found = await models.Employee.findOne({ where: { email: e.email } });
+                if (!found) await models.Employee.create(e);
+            }
+        }
 
-    console.log('\nSTEP 4 — Aggregate: count employees per department');
-    const depts = await Department.findAll();
-    const counts = [];
-    for (const d of depts) {
-        const count = await Employee.count({ where: { departmentId: d.id } });
-        counts.push(`${d.name}: ${count}`);
+        const employees = await models.Employee.findAll({ limit: 10 });
+        // Assign employees to projects using the association through data
+        await employees[0].addProject(p1, { through: { role: 'Lead', hoursAllocated: 20 } });
+        await employees[1].addProject(p1, { through: { role: 'Contributor', hoursAllocated: 10 } });
+        await employees[2].addProject(p2, { through: { role: 'Contributor', hoursAllocated: 15 } });
+        await employees[3].addProject(p2, { through: { role: 'Support', hoursAllocated: 5 } });
+        // Add a cross assignment
+        await employees[1].addProject(p2, { through: { role: 'Reviewer', hoursAllocated: 8 } });
+
+        console.log('Created projects and assignments.');
+
+        console.log('\nSTEP 2 — Read forward: fetch a project with its employees and their role/hours');
+        const projectAlpha = await models.Project.findOne({ where: { name: 'Project Alpha' }, include: { model: models.Employee } });
+        console.log('Project:', projectAlpha.name);
+        for (const emp of projectAlpha.Employees) {
+            const through = emp.EmployeeProject || emp.EmployeeProjects || {};
+            console.log(`- ${emp.name}: role=${through.role || '(unknown)'} hours=${through.hoursAllocated || 0}`);
+        }
+
+        console.log('\nSTEP 3 — Read reverse: fetch an employee with their projects');
+        const emp0 = await models.Employee.findOne({ where: { name: employees[0].name }, include: { model: models.Project } });
+        console.log(`${emp0.name} is on projects:`, emp0.Projects.map(p => p.name).join(', '));
+
+        console.log('\nSTEP 4 — Update: change one assignment (role/hours)');
+        // Fetch the join row directly and update
+        const joinRow = await models.EmployeeProject.findOne({ where: { employeeId: employees[1].id, projectId: p2.id } });
+        if (joinRow) {
+            console.log('Before update:', joinRow.toJSON());
+            joinRow.role = 'Senior Contributor';
+            joinRow.hoursAllocated = 12;
+            await joinRow.save();
+            const updated = await models.EmployeeProject.findOne({ where: { employeeId: joinRow.employeeId, projectId: joinRow.projectId } });
+            console.log('After update:', updated ? updated.toJSON() : '(not found)');
+        }
+
+        console.log('\nSTEP 5 — Delete one assignment: remove employee 0 from Project Alpha');
+        await employees[0].removeProject(p1);
+        const remaining = await models.EmployeeProject.findOne({ where: { employeeId: employees[0].id, projectId: p1.id } });
+        console.log('Assignment exists after removal?', !!remaining);
+
+        console.log('\nSTEP 6 — Evolve schema: add status column via migration 003 (already applied)');
+        // show projects now have status (if migration applied)
+        const projects = await models.Project.findAll();
+        for (const p of projects) {
+            console.log(`Project: ${p.name} status=${p.status || '(none)'}`);
+        }
+
+        console.log('\nSTEP 7 — Rollback can be tested with `node migrate.js down`.');
+
+        await sequelize.close();
     }
-    console.log(counts.join(', '));
 
-    console.log('\nSTEP 5 — Update: reassign one employee to a different department');
-    const bob = await Employee.findOne({ where: { name: 'Bob' } });
-    console.log('Before:', bob.toJSON());
-    bob.departmentId = d2.id;
-    await bob.save();
-    const bobAfter = await Employee.findByPk(bob.id, { include: Department });
-    console.log('After:', { id: bobAfter.id, name: bobAfter.name, department: bobAfter.Department.name });
-
-    console.log('\nSTEP 6 — Delete without cascade: attempt to delete a dept that still has employees');
-    try {
-        // Attempt to delete HR (which still has employees)
-        await d2.destroy();
-        console.log('Department deleted (unexpected)');
-    } catch (err) {
-        console.log('Delete failed as expected; error:');
-        console.log(err.message);
+    async function main() {
+        try {
+            await demo(false);
+            console.log('\nDemo completed.');
+        } catch (err) {
+            console.error('Demo error:', err);
+        }
     }
 
-    // Close connection for this run
-    await sequelize.close();
-}
-
-async function demoWithCascade() {
-    // Run a fresh pass with CASCADE=true and show cascading delete behavior
-    process.env.CASCADE = 'true';
-    const { sequelize, models } = load();
-    const { Department, Employee } = models;
-    await sequelize.authenticate();
-    await sequelize.sync({ force: true });
-
-    const d1 = await Department.create({ name: 'Engineering', description: 'Eng team' });
-    const d2 = await Department.create({ name: 'HR', description: 'People ops' });
-    const employeesData = [
-        { name: 'Alice', email: 'alice2@example.com', salary: 91000.00, departmentId: d1.id },
-        { name: 'Bob', email: 'bob2@example.com', salary: 81000.00, departmentId: d1.id },
-        { name: 'Carol', email: 'carol2@example.com', salary: 86000.00, departmentId: d2.id }
-    ];
-    await Promise.all(employeesData.map((e) => Employee.create(e)));
-
-    console.log('\nSTEP 7 — Delete with cascade: before delete, employees in HR:');
-    const hrBefore = await Employee.findAll({ where: { departmentId: d2.id } });
-    console.log(hrBefore.map((e) => e.name).join(', ') || '(none)');
-
-    await d2.destroy();
-
-    const hrAfter = await Employee.findAll({ where: { departmentId: d2.id } });
-    console.log('After delete, employees in HR:', hrAfter.map((e) => e.name).join(', ') || '(none)');
-
-    await sequelize.close();
-}
-
-async function main() {
-    try {
-        // Run demo without cascade first
-        await demo(false);
-
-        // Run cascade demonstration
-        await demoWithCascade();
-        console.log('\nAll steps completed.');
-    } catch (err) {
-        console.error('Demo error:', err);
-    }
-}
-
-main();
+    main();

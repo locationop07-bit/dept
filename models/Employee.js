@@ -33,6 +33,12 @@ const Employee = sequelize.define('Employee', {
 // after Employee is defined with sequelize.define( .)
 Employee.associate = (models) => {
     Employee.belongsTo(models.Department, { foreignKey: 'departmentId' });
+    // many-to-many to Project through EmployeeProject
+    Employee.belongsToMany(models.Project, {
+        through: models.EmployeeProject,
+        foreignKey: 'employeeId',
+        otherKey: 'projectId',
+    });
 };
 
 module.exports = Employee;
